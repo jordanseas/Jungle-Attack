@@ -1,8 +1,74 @@
 # Specs
 
+### Vista general de paquetes
+
+```mermaid
+flowchart LR
+    app --> network
+    app --> session
+    app --> protocol
+    network --> session
+    network --> protocol
+    network --> logic
+    network --> model
+    session --> logic
+    session --> model
+    session --> protocol
+    logic --> model
+    logic --> protocol
+    app -.-> constants
+    network -.-> constants
+    session -.-> constants
+    logic -.-> constants
+    model -.-> constants
+```
+
 ## Package: constants
 
 **Clase principal testeable:** ServerConfig
+
+```mermaid
+classDiagram
+    class IConstants {
+        <<interface>>
+        +int SERVER_PORT$
+        +String CONFIG_FILE$
+        +int MATCH_CODE_LENGTH$
+        +String MATCH_CODE_CHARS$
+        +String MATCH_CODE_REGEX$
+        +int NICKNAME_MIN_LENGTH$
+        +int NICKNAME_MAX_LENGTH$
+        +int MAP_COLUMNS$
+        +int MAP_ROWS$
+        +int ZONE_COUNT$
+        +int ZONE_WIDTH$
+        +int ZONE_HEIGHT$
+        +int NODE_SPACING$
+        +int SPECIES_COUNT$
+        +int PLAYERS_PER_MATCH$
+        +int PLAYER_PACK_SIZE$
+        +int MAX_PLAYER_ENERGY$
+        +int PLAYER_DAMAGE$
+        +int BOT_PACK_SIZE$
+        +int BOT_ENERGY$
+        +int BOT_DAMAGE$
+        +int COFFEE_CUP_COUNT$
+        +int BOTS_PER_BONUS$
+        +long ATTACK_COOLDOWN_MS$
+        +int NO_TARGET$
+        +double ENCOUNTER_RADIUS$
+        +double CUP_RADIUS$
+        +double FLAG_RADIUS$
+        +double PATH_SNAP_TOLERANCE$
+        +double BOT_SPREAD$
+        +double ANIMAL_SPEED$
+        +long TICK_MS$
+    }
+    class ServerConfig {
+        +loadPort(Path file)$ int
+    }
+    ServerConfig ..> IConstants : SERVER_PORT por defecto
+```
 
 ```java
 public interface IConstants
@@ -49,6 +115,183 @@ class ServerConfig
 ## Package: model
 
 **Clase principal testeable:** Animal (y GameMap)
+
+```mermaid
+classDiagram
+    class AnimalSpecies {
+        <<enumeration>>
+        JAGUAR
+        SLOTH
+        SCARLET_MACAW
+        WHITE_FACED_MONKEY
+        TOUCAN
+        RED_EYED_TREE_FROG
+        COATI
+        +fromName(String name)$ AnimalSpecies
+    }
+    class EventType {
+        <<enumeration>>
+        ATTACK
+        ANIMAL_DIED
+        CUP_COLLECTED
+        BOT_KILLED
+    }
+    class GameEvent {
+        <<record>>
+        +EventType type
+        +int sourceId
+        +int targetId
+        +int zoneId
+    }
+    class MatchResult {
+        <<record>>
+        +String winner
+        +Reason reason
+    }
+    class Reason {
+        <<enumeration>>
+        FLAG_TOUCHED
+        ALL_DEAD
+        OPPONENT_LEFT
+    }
+    note for Reason "Enum anidado en MatchResult. winner es null si hay empate"
+    class Node {
+        <<record>>
+        +int id
+        +double x
+        +double y
+        +zoneId() int
+    }
+    class GameMap {
+        -List~Node~ nodes
+        -Map~Integer,List~Node~~ neighbors
+        +GameMap()
+        +zoneOf(double x, double y)$ int
+        +originX(int zoneId)$ double
+        +originY(int zoneId)$ double
+        +getNeighbors(Node node) List~Node~
+        +nearestNode(double x, double y) Node
+        +centerOf(int zoneId) Node
+        +nodesIn(int zoneId) List~Node~
+        +neighborZones(int zoneId) List~Integer~
+        +pathsOf(int zoneId) List~double[]~
+    }
+    class Entity {
+        <<abstract>>
+        #int id
+        #double x
+        #double y
+        +getId() int
+        +getX() double
+        +getY() double
+        +setPosition(double x, double y) void
+        +getZoneId() int
+        +distanceTo(Entity other) double
+        +isNear(Entity other, double radius) boolean
+    }
+    class Animal {
+        <<abstract>>
+        -AnimalSpecies species
+        -Pack pack
+        -int energy
+        -boolean alive
+        -int targetId
+        -long lastAttack
+        +takeDamage(int amount) boolean
+        +heal(int amount) void
+        +engage(int targetId, long now) void
+        +canAttack(long now) boolean
+        +registerAttack() void
+        +clearTarget() void
+        +getTargetId() int
+        +getDamage() int
+        +getMaxEnergy()* int
+        +isAutoAttacker()* boolean
+    }
+    class PlayerAnimal {
+        -Deque~Node~ route
+        +setRoute(List~Node~ path) void
+        +getRoute() Deque~Node~
+        +getMaxEnergy() int
+        +isAutoAttacker() boolean
+    }
+    class BotAnimal {
+        +getMaxEnergy() int
+        +isAutoAttacker() boolean
+    }
+    class CoffeeCup {
+        -boolean consumed
+        +consume() void
+        +isConsumed() boolean
+    }
+    class Flag {
+        -PlayerPack owner
+        +getOwner() PlayerPack
+    }
+    class Pack {
+        #int id
+        #AnimalSpecies species
+        #List~Animal~ members
+        +living() List~Animal~
+        +countDead() int
+        +getDamage() int
+        +isBot() boolean
+    }
+    note for Pack "Pack de bots"
+    class PlayerPack {
+        -String nickname
+        -int cups
+        -int botsKilled
+        -int viewedZone
+        -Flag flag
+        +getDamage() int
+        +isBot() boolean
+        +addCup() void
+        +addBotKill() void
+        +setViewedZone(int zoneId) void
+    }
+    class GameWorld {
+        -GameMap map
+        -List~Pack~ packs
+        -Map~Integer,Animal~ animals
+        -List~CoffeeCup~ cups
+        -List~GameEvent~ events
+        -MatchResult result
+        -long startTime
+        +getAnimal(int id) Animal
+        +livingAnimals() List~Animal~
+        +playerPacks() List~PlayerPack~
+        +opponentOf(PlayerPack pack) PlayerPack
+        +visibleZones(PlayerPack pack) Set~Integer~
+        +addEvent(GameEvent e) void
+        +takeEvents() List~GameEvent~
+        +finish(MatchResult r) void
+        +isFinished() boolean
+        +getResult() MatchResult
+    }
+
+    Entity <|-- Animal
+    Entity <|-- CoffeeCup
+    Entity <|-- Flag
+    Animal <|-- PlayerAnimal
+    Animal <|-- BotAnimal
+    Pack <|-- PlayerPack
+    Animal --> AnimalSpecies
+    Pack --> AnimalSpecies
+    Pack "1" *-- "many" Animal : members
+    Animal --> Pack : pack
+    PlayerPack "1" *-- "1" Flag : flag
+    Flag --> PlayerPack : owner
+    GameMap "1" *-- "many" Node : nodes
+    PlayerAnimal o-- Node : route
+    GameEvent --> EventType
+    MatchResult --> Reason
+    GameWorld *-- GameMap : map
+    GameWorld "1" *-- "many" Pack : packs
+    GameWorld "1" *-- "many" CoffeeCup : cups
+    GameWorld "1" o-- "many" GameEvent : events
+    GameWorld --> MatchResult : result
+```
 
 ```java
 enum AnimalSpecies
@@ -176,6 +419,38 @@ class GameWorld
 
 **Clase principal testeable:** GameEngine
 
+```mermaid
+classDiagram
+    class PathFinder {
+        <<final>>
+        +findPath(GameMap map, Node start, Node goal)$ List~Node~
+        +closestNodes(GameMap map, Node start, int count)$ List~Node~
+    }
+    class WorldFactory {
+        -Random random
+        +create(GameMap map, String nick1, AnimalSpecies sp1, String nick2, AnimalSpecies sp2, long now) GameWorld
+    }
+    class GameEngine {
+        -GameWorld world
+        +move(PlayerPack p, List~Integer~ ids, int zoneId, double localX, double localY) ErrorCode
+        +attack(PlayerPack p, List~Integer~ ids, int targetId, long now) ErrorCode
+        +viewZone(PlayerPack p, int zoneId) ErrorCode
+        +update(long now, long deltaMs) void
+        -moveAnimals(long deltaMs) void
+        -collectCups() void
+        -checkVictory() void
+        -combat(long now) void
+        -fixViews() void
+    }
+    note for GameEngine "Orden del tick: moveAnimals, collectCups, checkVictory, combat, fixViews"
+
+    WorldFactory ..> PathFinder : closestNodes
+    WorldFactory ..> GameWorld : crea
+    GameEngine --> GameWorld : world
+    GameEngine ..> PathFinder : findPath
+    GameEngine ..> ErrorCode
+```
+
 ```java
 final class PathFinder  (utilidades static)
 +static List<Node> findPath(GameMap map, Node start, Node goal) // BFS con un mapa de "padres"; lista vacía si no hay ruta
@@ -211,6 +486,89 @@ class GameEngine
 **Clase principal testeable:** GameSession
 
 > Todos los métodos son default (vacíos), así cada suscriptor sobrescribe solo los que le interesan.
+
+```mermaid
+classDiagram
+    class IGameListener {
+        <<interface>>
+        +onOpponentJoined(GameSession s) void
+        +onSelectionChanged(GameSession s) void
+        +onGameStarted(GameSession s) void
+        +onTick(GameSession s, List~GameEvent~ events) void
+        +onGameOver(GameSession s, MatchResult result) void
+        +onOpponentLeft(GameSession s) void
+    }
+    note for IGameListener "Subscriber del Observer. Todos los métodos son default"
+    class Player {
+        -String nickname
+        -IGameListener listener
+        -AnimalSpecies species
+        -PlayerPack pack
+    }
+    class State {
+        <<enumeration>>
+        WAITING
+        SELECTING
+        PLAYING
+        FINISHED
+    }
+    note for State "Enum anidado en GameSession"
+    class GameSession {
+        -String code
+        -State state
+        -List~Player~ players
+        -List~IGameListener~ listeners
+        -GameEngine engine
+        -ConcurrentLinkedQueue~Runnable~ commands
+        -ScheduledExecutorService scheduler
+        -ScheduledFuture~?~ loop
+        -Random random
+        -long lastTick
+        +join(Player p) ErrorCode
+        +selectSpecies(Player p, AnimalSpecies s) ErrorCode
+        +availableSpecies() List~AnimalSpecies~
+        -start() void
+        +submit(Runnable command) void
+        +tick() void
+        +leave(Player p) void
+        -finish(MatchResult r) void
+        +addListener(IGameListener l) void
+        +removeListener(IGameListener l) void
+        +opponentOf(Player p) Player
+        +getEngine() GameEngine
+        +getCode() String
+        +getState() State
+    }
+    note for GameSession "Publisher del Observer. join, selectSpecies y leave son synchronized"
+    class MatchManager {
+        <<Singleton>>
+        -ConcurrentHashMap~String,GameSession~ sessions
+        -ScheduledExecutorService scheduler
+        -Random random
+        -MatchManager()
+        +getInstance()$ MatchManager
+        +generateCode(Random random)$ String
+        +isValidNickname(String n)$ boolean
+        +isValidCode(String c)$ boolean
+        +createMatch(Player creator) GameSession
+        +joinMatch(String code, Player p) ErrorCode
+        +onGameOver(GameSession s, MatchResult r) void
+        +activeMatches() int
+    }
+    note for MatchManager "Holder idiom"
+
+    IGameListener <|.. MatchManager
+    GameSession --> State
+    GameSession "1" *-- "2" Player : players
+    GameSession "1" o-- "many" IGameListener : listeners
+    GameSession *-- GameEngine : engine
+    GameSession ..> WorldFactory : start
+    GameSession ..> ErrorCode
+    Player --> IGameListener : listener
+    Player --> PlayerPack : pack
+    Player --> AnimalSpecies
+    MatchManager "1" o-- "many" GameSession : sessions
+```
 
 ```java
 interface IGameListener  (Subscriber del Observer)
@@ -268,6 +626,91 @@ class MatchManager implements IGameListener  (Singleton, *holder idiom*)
 
 **Clase principal testeable:** MessageSerializer
 
+```mermaid
+classDiagram
+    class MessageType {
+        <<enumeration>>
+        CREATE_MATCH
+        JOIN_MATCH
+        SELECT_ANIMAL
+        MOVE_ANIMALS
+        ATTACK
+        VIEW_ZONE
+        MATCH_CREATED
+        MATCH_JOINED
+        ERROR
+        ANIMAL_SELECTION
+        GAME_STARTED
+        STATE_UPDATE
+        GAME_OVER
+    }
+    class ErrorCode {
+        <<enumeration>>
+        MATCH_NOT_FOUND
+        MATCH_FULL
+        NICKNAME_TAKEN
+        WRONG_PHASE
+        SPECIES_TAKEN
+        UNKNOWN_COMMAND
+        MALFORMED_MESSAGE
+        ...
+        -String message
+        +getMessage() String
+    }
+    class Message {
+        <<record>>
+        +MessageType type
+        +JsonObject payload
+        +of(MessageType type, Object payload)$ Message
+        +error(ErrorCode code)$ Message
+    }
+    class MessageSerializer {
+        <<final>>
+        -Gson GSON$
+        +toJson(Message m)$ String
+        +fromJson(String line)$ Message
+    }
+    class Payloads {
+        <<final>>
+    }
+    class AnimalState {
+        <<record>>
+    }
+    class CupState {
+        <<record>>
+    }
+    class FlagState {
+        <<record>>
+    }
+    class EventState {
+        <<record>>
+    }
+    class ZoneInfo {
+        <<record>>
+    }
+    class StateUpdate {
+        <<record>>
+    }
+    class GameStarted {
+        <<record>>
+    }
+    class Summary {
+        <<record>>
+    }
+
+    Message --> MessageType
+    Message ..> ErrorCode
+    MessageSerializer ..> Message
+    Payloads *-- AnimalState
+    Payloads *-- CupState
+    Payloads *-- FlagState
+    Payloads *-- EventState
+    Payloads *-- ZoneInfo
+    Payloads *-- StateUpdate
+    Payloads *-- GameStarted
+    Payloads *-- Summary
+```
+
 ```java
 enum MessageType
 CREATE_MATCH, JOIN_MATCH, SELECT_ANIMAL, MOVE_ANIMALS, ATTACK, VIEW_ZONE // cliente → servidor
@@ -302,6 +745,79 @@ final class Payloads
 ## Package: network
 
 **Clase principal testeable:** MessageDispatcher
+
+```mermaid
+classDiagram
+    class Runnable {
+        <<interface>>
+        +run() void
+    }
+    class IGameListener {
+        <<interface>>
+    }
+    class ClientHandler {
+        -BufferedReader in
+        -PrintWriter out
+        -MessageDispatcher dispatcher
+        -Player player
+        -GameSession session
+        +run() void
+        +send(Message m) void
+        +sendError(ErrorCode code) void
+        +join(Player p, GameSession s) void
+        +onOpponentJoined(GameSession s) void
+        +onSelectionChanged(GameSession s) void
+        +onGameStarted(GameSession s) void
+        +onTick(GameSession s, List~GameEvent~ events) void
+        +onGameOver(GameSession s, MatchResult result) void
+        +onOpponentLeft(GameSession s) void
+    }
+    note for ClientHandler "Concrete Subscriber. send() es synchronized"
+    class PayloadBuilder {
+        <<final>>
+        +gameStarted(GameWorld w, PlayerPack viewer)$ GameStarted
+        +stateUpdate(GameWorld w, PlayerPack viewer, List~GameEvent~ events)$ StateUpdate
+        +summary(GameWorld w, MatchResult r, PlayerPack viewer)$ Summary
+    }
+    class IMessageHandler {
+        <<interface>>
+        +handle(ClientHandler client, JsonObject payload) void
+    }
+    note for IMessageHandler "Strategy"
+    class MessageDispatcher {
+        -Map~MessageType,IMessageHandler~ handlers
+        +register(MessageType type, IMessageHandler handler) void
+        +dispatch(ClientHandler client, String line) void
+    }
+    note for MessageDispatcher "Context del Strategy"
+    class CreateMatchHandler
+    class JoinMatchHandler
+    class SelectAnimalHandler
+    class MoveHandler
+    class AttackHandler
+    class ViewZoneHandler
+
+    Runnable <|.. ClientHandler
+    IGameListener <|.. ClientHandler
+    ClientHandler --> MessageDispatcher : dispatcher
+    ClientHandler --> Player : player
+    ClientHandler --> GameSession : session
+    ClientHandler ..> PayloadBuilder
+    MessageDispatcher "1" o-- "many" IMessageHandler : handlers
+    MessageDispatcher ..> MessageSerializer : fromJson
+    IMessageHandler <|.. CreateMatchHandler
+    IMessageHandler <|.. JoinMatchHandler
+    IMessageHandler <|.. SelectAnimalHandler
+    IMessageHandler <|.. MoveHandler
+    IMessageHandler <|.. AttackHandler
+    IMessageHandler <|.. ViewZoneHandler
+    CreateMatchHandler ..> MatchManager : createMatch
+    JoinMatchHandler ..> MatchManager : joinMatch
+    SelectAnimalHandler ..> GameSession : selectSpecies
+    MoveHandler ..> GameSession : submit
+    AttackHandler ..> GameSession : submit
+    ViewZoneHandler ..> GameSession : submit
+```
 
 ```java
 class ClientHandler implements Runnable, IGameListener  (Concrete Subscriber)
@@ -347,6 +863,17 @@ ViewZoneHandler // session.submit(() -> engine.viewZone(...))
 ## Package: app
 
 **Clase principal testeable:** ServerApp (método resolvePort)
+
+```mermaid
+classDiagram
+    class ServerApp {
+        +main(String[] args)$ void
+        +resolvePort(String[] args)$ int
+    }
+    ServerApp ..> MessageDispatcher : registra los 6 handlers
+    ServerApp ..> ClientHandler : uno por cada accept()
+    ServerApp ..> ServerConfig : loadPort
+```
 
 ```java
 class ServerApp
