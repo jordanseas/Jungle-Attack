@@ -1,3 +1,10 @@
+# Jungle Attack - Server
+
+## Integrantes
+
+* Andy Quiros Salazar
+* Jordan Seas Alvarez
+
 # Specs
 
 ### Vista general de paquetes
@@ -22,6 +29,8 @@ flowchart LR
     logic -.-> constants
     model -.-> constants
 ```
+
+> `logic` se divide en dos subpaquetes: `logic.systems` (las fases del tick) y `logic.commands` (las acciones del jugador). GameEngine solo los coordina.
 
 ## Package: constants
 
@@ -116,6 +125,8 @@ class ServerConfig
 
 **Clase principal testeable:** Animal (y GameMap)
 
+> El modelo no solo guarda datos: cada objeto sabe hacer lo que le corresponde (avanzar por su ruta, ser recogido, ser tocado). Así esa lógica no se acumula en GameEngine.
+
 ```mermaid
 classDiagram
     class AnimalSpecies {
@@ -205,6 +216,7 @@ classDiagram
         +clearTarget() void
         +getTargetId() int
         +getDamage() int
+        +isEnemyOf(Animal other) boolean
         +getMaxEnergy()* int
         +isAutoAttacker()* boolean
     }
@@ -212,6 +224,7 @@ classDiagram
         -Deque~Node~ route
         +setRoute(List~Node~ path) void
         +getRoute() Deque~Node~
+        +advance(double distance) void
         +getMaxEnergy() int
         +isAutoAttacker() boolean
     }
@@ -221,12 +234,13 @@ classDiagram
     }
     class CoffeeCup {
         -boolean consumed
-        +consume() void
+        +tryCollect(Animal a) boolean
         +isConsumed() boolean
     }
     class Flag {
         -PlayerPack owner
         +getOwner() PlayerPack
+        +isTouchedBy(Animal a) boolean
     }
     class Pack {
         #int id
@@ -234,6 +248,7 @@ classDiagram
         #List~Animal~ members
         +living() List~Animal~
         +countDead() int
+        +isWiped() boolean
         +getDamage() int
         +isBot() boolean
     }
@@ -258,6 +273,10 @@ classDiagram
         -List~GameEvent~ events
         -MatchResult result
         -long startTime
+        +getMap() GameMap
+        +getPacks() List~Pack~
+        +getCups() List~CoffeeCup~
+        +getStartTime() long
         +getAnimal(int id) Animal
         +livingAnimals() List~Animal~
         +playerPacks() List~PlayerPack~
@@ -355,6 +374,7 @@ abstract class Animal extends Entity
 +void registerAttack() // lastAttack += ATTACK_COOLDOWN_MS
 +void clearTarget(), + int getTargetId()
 +int getDamage() // pack.getDamage()
++boolean isEnemyOf(Animal other) // pertenecen a packs distintos (dos bots nunca se atacan entre sí)
 +abstract int getMaxEnergy() // polimorfismo
 +abstract boolean isAutoAttacker() // polimorfismo: el bot ataca solo, el jugador no
 ```
@@ -364,6 +384,7 @@ class PlayerAnimal extends Animal
 -Deque<Node> route // nodos que le faltan por recorrer
 +void setRoute(List<Node> path) // también cancela el ataque
 +Deque<Node> getRoute()
++void advance(double distance) // avanza hacia el siguiente nodo de la ruta; si lo alcanza lo saca y sigue con el resto de la distancia
 +int getMaxEnergy() → MAX_PLAYER_ENERGY · + boolean isAutoAttacker() → false
 ```
 
@@ -374,18 +395,22 @@ class BotAnimal extends Animal
 
 ```java
 class CoffeeCup extends Entity
--boolean consumed · + void consume() · + boolean isConsumed()
+-boolean consumed
++boolean tryCollect(Animal a) // si no está consumida y a.isNear(this, CUP_RADIUS): la consume y devuelve true
++boolean isConsumed()
 ```
 
 ```java
 class Flag extends Entity
 -PlayerPack owner · + PlayerPack getOwner()
++boolean isTouchedBy(Animal a) // a vivo, de un jugador distinto al dueño y a ≤ FLAG_RADIUS
 ```
 
 ```java
 class Pack  (pack de bots)
 #int id · # AnimalSpecies species · # List<Animal> members
 +List<Animal> living() · + int countDead()
++boolean isWiped() // living().isEmpty()
 +int getDamage() → BOT_DAMAGE // polimorfismo
 +boolean isBot() → true
 ```
@@ -404,6 +429,7 @@ getters y setViewedZone(int zoneId)
 class GameWorld
 -GameMap map · - List<Pack> packs · - Map<Integer, Animal> animals · - List<CoffeeCup> cups
 -List<GameEvent> events · - MatchResult result · - long startTime
++GameMap getMap() · + List<Pack> getPacks() · + List<CoffeeCup> getCups() · + long getStartTime()
 +Animal getAnimal(int id)
 +List<Animal> livingAnimals()
 +List<PlayerPack> playerPacks()
@@ -416,8 +442,9 @@ class GameWorld
 ## Package: logic
 
 > Todas las reglas del juego. Solo las ejecuta el hilo del tick de cada partida.
+> GameEngine **no contiene reglas**: es una Facade que recibe comandos y recorre los sistemas en orden. Cada regla vive en su propia clase y se prueba por separado.
 
-**Clase principal testeable:** GameEngine
+**Clases principales testeables:** CombatSystem, MoveCommand (y PathFinder)
 
 ```mermaid
 classDiagram
@@ -432,23 +459,74 @@ classDiagram
     }
     class GameEngine {
         -GameWorld world
-        +move(PlayerPack p, List~Integer~ ids, int zoneId, double localX, double localY) ErrorCode
-        +attack(PlayerPack p, List~Integer~ ids, int targetId, long now) ErrorCode
-        +viewZone(PlayerPack p, int zoneId) ErrorCode
+        -List~ITickSystem~ systems
+        +execute(IGameCommand command, long now) ErrorCode
         +update(long now, long deltaMs) void
-        -moveAnimals(long deltaMs) void
-        -collectCups() void
-        -checkVictory() void
-        -combat(long now) void
-        -fixViews() void
+        +getWorld() GameWorld
     }
-    note for GameEngine "Orden del tick: moveAnimals, collectCups, checkVictory, combat, fixViews"
+    note for GameEngine "Facade. Orden del tick: Movement, Cup, Victory, Combat, View"
+
+    class ITickSystem {
+        <<interface>>
+        +update(GameWorld world, long now, long deltaMs) void
+    }
+    class MovementSystem
+    class CupSystem
+    class VictorySystem
+    class CombatSystem {
+        -TargetSelector selector
+        -DamageResolver resolver
+    }
+    class ViewSystem
+    class TargetSelector {
+        +update(GameWorld world, long now) void
+    }
+    class DamageResolver {
+        +resolve(GameWorld world, long now) void
+    }
+
+    class IGameCommand {
+        <<interface>>
+        +execute(GameWorld world, long now) ErrorCode
+    }
+    note for IGameCommand "Command"
+    class MoveCommand {
+        <<record>>
+        +PlayerPack pack
+        +List~Integer~ animalIds
+        +int zoneId
+        +double localX
+        +double localY
+    }
+    class AttackCommand {
+        <<record>>
+        +PlayerPack pack
+        +List~Integer~ animalIds
+        +int targetId
+    }
+    class ViewZoneCommand {
+        <<record>>
+        +PlayerPack pack
+        +int zoneId
+    }
 
     WorldFactory ..> PathFinder : closestNodes
     WorldFactory ..> GameWorld : crea
     GameEngine --> GameWorld : world
-    GameEngine ..> PathFinder : findPath
-    GameEngine ..> ErrorCode
+    GameEngine "1" o-- "5" ITickSystem : systems
+    GameEngine ..> IGameCommand : execute
+    ITickSystem <|.. MovementSystem
+    ITickSystem <|.. CupSystem
+    ITickSystem <|.. VictorySystem
+    ITickSystem <|.. CombatSystem
+    ITickSystem <|.. ViewSystem
+    CombatSystem *-- TargetSelector
+    CombatSystem *-- DamageResolver
+    IGameCommand <|.. MoveCommand
+    IGameCommand <|.. AttackCommand
+    IGameCommand <|.. ViewZoneCommand
+    MoveCommand ..> PathFinder : findPath
+    IGameCommand ..> ErrorCode
 ```
 
 ```java
@@ -468,24 +546,79 @@ class WorldFactory
 ```
 
 ```java
-class GameEngine
+class GameEngine  (Facade)
 -GameWorld world
-+ErrorCode move(PlayerPack p, List<Integer> ids, int zoneId, double localX, double localY) // zona visible + clic cerca de un nodo; con BFS le arma la ruta a cada animal vivo y propio. Devuelve null si todo salió bien
-+ErrorCode attack(PlayerPack p, List<Integer> ids, int targetId, long now) // el objetivo existe, está vivo y no es propio; engage solo a los animales que ya están en rango
-+ErrorCode viewZone(PlayerPack p, int zoneId) // solo si es una zona visible
-+void update(long now, long deltaMs) // un tick, en este orden:
--void moveAnimals(long deltaMs) // velocidad constante usando deltaMs
--void collectCups() // taza tocada → addCup() + evento
--void checkVictory() // bandera tocada o jugador sin animales → world.finish(...)
--void combat(long now) // 1) los bots eligen al animal más cercano; 2) se sueltan objetivos muertos o lejanos; 3) se suman los golpes de quienes cumplen el cooldown; 4) se aplica todo junto (ANIMAL_DIED, BOT_KILLED → addBotKill())
--void fixViews() // corrige viewedZone si esa zona ya no es visible
+-List<ITickSystem> systems // List.of(Movement, Cup, Victory, Combat, View): el orden de la lista es el orden del tick
++ErrorCode execute(IGameCommand command, long now) // command.execute(world, now); null si todo salió bien
++void update(long now, long deltaMs) // recorre systems; se detiene si world.isFinished()
++GameWorld getWorld()
+```
+
+### Subpaquete logic.systems
+
+```java
+interface ITickSystem
++void update(GameWorld world, long now, long deltaMs) // una fase del tick
+```
+
+```java
+class MovementSystem implements ITickSystem
+// a cada PlayerAnimal vivo con ruta: advance(ANIMAL_SPEED * deltaMs / 1000.0)
+
+class CupSystem implements ITickSystem
+// por cada taza libre y animal de jugador vivo: si cup.tryCollect(a) → pack.addCup() + evento CUP_COLLECTED
+
+class VictorySystem implements ITickSystem
+// 1) si la bandera de un jugador isTouchedBy(...) un animal del rival → finish(rival, FLAG_TOUCHED)
+// 2) si un PlayerPack isWiped() → finish(rival, ALL_DEAD); si los dos → finish(null, ALL_DEAD) (empate)
+
+class CombatSystem implements ITickSystem
+-TargetSelector selector · - DamageResolver resolver
+// selector.update(world, now) y luego resolver.resolve(world, now)
+
+class ViewSystem implements ITickSystem
+// si el viewedZone de un jugador ya no está en visibleZones(...), lo cambia a la zona de uno de sus animales vivos
+```
+
+```java
+class TargetSelector
++void update(GameWorld world, long now)
+// 1) los bots sin objetivo eligen el enemigo vivo más cercano a ≤ ENCOUNTER_RADIUS → engage(...)
+// 2) se sueltan (clearTarget) los objetivos muertos o que quedaron fuera de ENCOUNTER_RADIUS
+
+class DamageResolver
++void resolve(GameWorld world, long now)
+// 1) acumula en un Map<Integer,Integer> los golpes de quienes tienen objetivo y canAttack(now) → registerAttack() + evento ATTACK
+// 2) aplica todo junto (así dos animales que se pegan a la vez reciben su golpe aunque uno muera)
+// 3) por cada muerte: evento ANIMAL_DIED; si era bot → addBotKill() al pack del atacante + evento BOT_KILLED
+```
+
+### Subpaquete logic.commands
+
+```java
+interface IGameCommand  (Command)
++ErrorCode execute(GameWorld world, long now) // null si todo salió bien
+```
+
+```java
+record MoveCommand(PlayerPack pack, List<Integer> animalIds, int zoneId, double localX, double localY) implements IGameCommand
+// 1) zoneId debe estar en visibleZones(pack) → si no ZONE_NOT_VISIBLE
+// 2) pasa a coordenadas globales y busca nearestNode; si está a más de PATH_SNAP_TOLERANCE → INVALID_DESTINATION
+// 3) a cada animal vivo y propio: setRoute(PathFinder.findPath(...)); si ninguno sirvió → NO_ANIMALS
+
+record AttackCommand(PlayerPack pack, List<Integer> animalIds, int targetId) implements IGameCommand
+// el objetivo existe, está vivo y no es propio → si no INVALID_TARGET
+// engage(...) solo a los animales propios y vivos que ya están a ≤ ENCOUNTER_RADIUS
+
+record ViewZoneCommand(PlayerPack pack, int zoneId) implements IGameCommand
+// si zoneId está en visibleZones(pack) → setViewedZone; si no ZONE_NOT_VISIBLE
 ```
 
 ## Package: session
 
 **Clase principal testeable:** GameSession
 
-> Todos los métodos son default (vacíos), así cada suscriptor sobrescribe solo los que le interesan.
+> Todos los métodos de IGameListener son default (vacíos), así cada suscriptor sobrescribe solo los que le interesan.
 
 ```mermaid
 classDiagram
@@ -528,7 +661,7 @@ classDiagram
         +selectSpecies(Player p, AnimalSpecies s) ErrorCode
         +availableSpecies() List~AnimalSpecies~
         -start() void
-        +submit(Runnable command) void
+        +submit(IGameCommand command, Consumer~ErrorCode~ onError) ErrorCode
         +tick() void
         +leave(Player p) void
         -finish(MatchResult r) void
@@ -563,6 +696,7 @@ classDiagram
     GameSession "1" o-- "many" IGameListener : listeners
     GameSession *-- GameEngine : engine
     GameSession ..> WorldFactory : start
+    GameSession ..> IGameCommand : submit
     GameSession ..> ErrorCode
     Player --> IGameListener : listener
     Player --> PlayerPack : pack
@@ -596,9 +730,11 @@ class GameSession  (Publisher del Observer)
 +synchronized ErrorCode selectSpecies(Player p, AnimalSpecies s) // WRONG_PHASE, SPECIES_TAKEN; cuando eligen los dos → start()
 +List<AnimalSpecies> availableSpecies()
 -void start() // WorldFactory + onGameStarted + programa tick() cada TICK_MS
-+void submit(Runnable command) // los handlers encolan; se ejecuta en el siguiente tick
++ErrorCode submit(IGameCommand command, Consumer<ErrorCode> onError)
+  // si state != PLAYING → WRONG_PHASE de inmediato
+  // si no, encola () -> { e = engine.execute(command, now); if (e != null) onError.accept(e); } y devuelve null
 +void tick() // ejecuta los comandos encolados, engine.update(...), onTick(...), y termina si hay ganador. Atrapa RuntimeException para que el scheduler no se detenga
-+synchronized void leave(Player p) // en juego: encola la victoria del rival; antes: cancela y avisa onOpponentLeft
++synchronized void leave(Player p) // en juego: encola la victoria del rival (OPPONENT_LEFT); antes: cancela y avisa onOpponentLeft
 -void finish(MatchResult r) // cancela el loop + onGameOver
 +void addListener(IGameListener l) · + void removeListener(IGameListener l)
 +Player opponentOf(Player p) · + GameEngine getEngine() · + String getCode() · + State getState()
@@ -623,8 +759,45 @@ class MatchManager implements IGameListener  (Singleton, *holder idiom*)
 ## Package: protocol
 
 > Contrato JSON con el cliente. No depende de ningún otro paquete del servidor.
+> Cada mensaje es **una línea** de JSON: `{"type": "...", "payload": {...}}`.
 
 **Clase principal testeable:** MessageSerializer
+
+### Mensajes
+
+| Tipo | Dirección | Payload |
+|---|---|---|
+| CREATE_MATCH | cliente → servidor | `{ nickname }` |
+| JOIN_MATCH | cliente → servidor | `{ nickname, code }` |
+| SELECT_ANIMAL | cliente → servidor | `{ species }` |
+| MOVE_ANIMALS | cliente → servidor | `{ animalIds, zoneId, x, y }` (x, y locales a la zona) |
+| ATTACK | cliente → servidor | `{ animalIds, targetId }` |
+| VIEW_ZONE | cliente → servidor | `{ zoneId }` |
+| MATCH_CREATED | servidor → cliente | `{ code }` |
+| MATCH_JOINED | servidor → cliente | `{ code, opponent }` (se envía a los dos jugadores) |
+| ERROR | servidor → cliente | `{ code, message }` |
+| ANIMAL_SELECTION | servidor → cliente | `{ available, opponentChoice }` |
+| GAME_STARTED | servidor → cliente | `Payloads.GameStarted` |
+| STATE_UPDATE | servidor → cliente | `Payloads.StateUpdate` (cada TICK_MS) |
+| GAME_OVER | servidor → cliente | `Payloads.Summary` |
+
+### Códigos de error
+
+| Código | Mensaje |
+|---|---|
+| MATCH_NOT_FOUND | No existe una partida con ese código |
+| MATCH_FULL | La partida ya tiene dos jugadores |
+| NICKNAME_TAKEN | Ese apodo ya está en uso en la partida |
+| INVALID_NICKNAME | El apodo debe tener entre 3 y 16 caracteres |
+| INVALID_MATCH_CODE | El código debe tener 4 letras o números |
+| WRONG_PHASE | Esa acción no se puede hacer en este momento |
+| SPECIES_TAKEN | Esa especie ya fue elegida |
+| ZONE_NOT_VISIBLE | No hay animales tuyos vivos en esa zona |
+| INVALID_DESTINATION | El destino no está sobre un camino |
+| NO_ANIMALS | Ninguno de los animales seleccionados puede moverse |
+| INVALID_TARGET | Ese objetivo no se puede atacar |
+| UNKNOWN_COMMAND | Comando desconocido |
+| MALFORMED_MESSAGE | El mensaje no tiene el formato esperado |
 
 ```mermaid
 classDiagram
@@ -649,11 +822,16 @@ classDiagram
         MATCH_NOT_FOUND
         MATCH_FULL
         NICKNAME_TAKEN
+        INVALID_NICKNAME
+        INVALID_MATCH_CODE
         WRONG_PHASE
         SPECIES_TAKEN
+        ZONE_NOT_VISIBLE
+        INVALID_DESTINATION
+        NO_ANIMALS
+        INVALID_TARGET
         UNKNOWN_COMMAND
         MALFORMED_MESSAGE
-        ...
         -String message
         +getMessage() String
     }
@@ -719,14 +897,14 @@ MATCH_CREATED, MATCH_JOINED, ERROR, ANIMAL_SELECTION, GAME_STARTED, STATE_UPDATE
 
 ```java
 enum ErrorCode
-Los códigos de la tabla de arriba
+Los códigos de la tabla "Códigos de error"
 -String message // texto en español · + String getMessage()
 ```
 
 ```java
 record Message(MessageType type, JsonObject payload)
 +static Message of(MessageType type, Object payload) // convierte cualquier objeto a JsonObject con Gson
-+static Message error(ErrorCode code)
++static Message error(ErrorCode code) // payload { code, message }
 ```
 
 ```java
@@ -738,8 +916,19 @@ final class MessageSerializer
 
 ```java
 final class Payloads
-// Un solo archivo con los record de respuesta (cada uno ocupa una línea):
-// AnimalState, CupState, FlagState, EventState, ZoneInfo, StateUpdate, GameStarted, Summary
+// Un solo archivo con los record de respuesta. Las coordenadas siempre son locales a la zona.
+// packType es relativo a quien recibe: "PLAYER", "OPPONENT" o "BOT"
+record AnimalState(int id, int packId, String species, String packType, double x, double y, int energy, boolean alive)
+record CupState(int id, double x, double y)
+record FlagState(String owner, double x, double y) // owner: "PLAYER" u "OPPONENT"
+record EventState(String type, int sourceId, int targetId)
+record ZoneInfo(int id, List<Integer> neighbors, List<double[]> paths)
+record StateUpdate(long serverTime, int zoneId, List<Integer> visibleZones, List<AnimalState> animals,
+                   List<CupState> cups, List<FlagState> flags, int damage, int cupsConsumed, int botsKilled, List<EventState> events)
+record GameStarted(int zoneWidth, int zoneHeight, List<ZoneInfo> zones, String opponent,
+                   String species, String opponentSpecies, StateUpdate initial)
+record Summary(String winner, String reason, long durationMs, int botsKilled,
+               Map<Integer, Integer> deathsByPack, int playerCups, int opponentCups)
 ```
 
 ## Package: network
@@ -814,6 +1003,9 @@ classDiagram
     CreateMatchHandler ..> MatchManager : createMatch
     JoinMatchHandler ..> MatchManager : joinMatch
     SelectAnimalHandler ..> GameSession : selectSpecies
+    MoveHandler ..> MoveCommand : crea
+    AttackHandler ..> AttackCommand : crea
+    ViewZoneHandler ..> ViewZoneCommand : crea
     MoveHandler ..> GameSession : submit
     AttackHandler ..> GameSession : submit
     ViewZoneHandler ..> GameSession : submit
@@ -829,6 +1021,7 @@ class ClientHandler implements Runnable, IGameListener  (Concrete Subscriber)
 +void sendError(ErrorCode code)
 +void join(Player p, GameSession s) // guarda la partida actual
 Sobrescribe los 6 métodos de IGameListener: arma el mensaje con PayloadBuilder y lo envía
+onGameOver y onOpponentLeft además dejan session = null (el cliente vuelve al lobby y puede crear otra partida)
 ```
 
 ```java
@@ -852,12 +1045,12 @@ class MessageDispatcher  (Context del Strategy)
 
 ```java
 Handlers (todos implements IMessageHandler, ~10 líneas cada uno)
-CreateMatchHandler // valida el apodo → MatchManager.createMatch → MATCH_CREATED
-JoinMatchHandler // valida el apodo y el código → MatchManager.joinMatch
+CreateMatchHandler // valida el apodo (INVALID_NICKNAME) → MatchManager.createMatch → MATCH_CREATED
+JoinMatchHandler // valida el apodo y el código (INVALID_MATCH_CODE) → MatchManager.joinMatch
 SelectAnimalHandler // session.selectSpecies(...)
-MoveHandler // session.submit(() -> engine.move(...)); si devuelve error → sendError
-AttackHandler // session.submit(() -> engine.attack(...))
-ViewZoneHandler // session.submit(() -> engine.viewZone(...))
+MoveHandler // arma MoveCommand → session.submit(cmd, client::sendError); si devuelve error → sendError
+AttackHandler // arma AttackCommand → session.submit(cmd, client::sendError)
+ViewZoneHandler // arma ViewZoneCommand → session.submit(cmd, client::sendError)
 ```
 
 ## Package: app
@@ -880,3 +1073,31 @@ class ServerApp
 +static void main(String[] args) // registra los 6 handlers, abre el ServerSocket (try-with-resources) y por cada accept() envía un ClientHandler al pool de hilos
 +static int resolvePort(String[] args) // argumento → config.properties → SERVER_PORT
 ```
+
+## Decisiones de diseño
+
+### GameEngine distribuido
+En la primera versión GameEngine validaba comandos, movía, recogía tazas, revisaba victoria, resolvía combate y corregía vistas. Ahora:
+- Cada fase del tick es un `ITickSystem` independiente. GameEngine solo recorre la lista en orden.
+- Cada acción del jugador es un `IGameCommand` (patrón Command). Los handlers lo crean y la sesión lo encola.
+- La lógica que le pertenece a un objeto vive en ese objeto: `PlayerAnimal.advance`, `CoffeeCup.tryCollect`, `Flag.isTouchedBy`, `Pack.isWiped`.
+
+Así, agregar una regla nueva es agregar un sistema a la lista sin tocar los demás, y cada regla se prueba sola con un `GameWorld` armado a mano.
+
+### Reparto cliente / servidor
+El servidor es la autoridad de todo lo que afecta el resultado (movimiento, combate, tazas y victoria) para que un cliente no pueda hacer trampa. El cliente se encarga de lo demás y evita mandar mensajes que se sabe que fallarían:
+
+| Lo hace el cliente | Lo hace el servidor |
+|---|---|
+| Validar apodo y código antes de enviar | Volver a validar (nunca confiar en el cliente) |
+| Selección de animales (clic y arrastre) | Rutas con BFS y movimiento |
+| Revisar que el destino esté sobre un camino | Combate, cooldown y daño |
+| No atacar animales propios | Tazas, bonificaciones y victoria |
+| Cambiar solo a zonas visibles | Decidir qué zona ve cada jugador |
+| Interpolar posiciones a 30 FPS | Enviar el estado cada 100 ms |
+
+### Movimiento con X, Y sobre un grafo de nodos
+El mapa ya funciona como una cuadrícula: los caminos se discretizan en nodos cada `NODE_SPACING` y el BFS trabaja sobre ese grafo, no sobre el plano continuo. Las coordenadas X, Y solo se usan para que el movimiento entre nodos se vea fluido y para los radios de encuentro, tazas y bandera. Con celdas puras el BFS sería igual, pero los animales saltarían de celda en celda y los radios tendrían que expresarse en celdas.
+
+### PlayerPack extends Pack
+Un pack de bots y un pack de jugador comparten miembros, especie, `living()` y `countDead()`, y difieren en el daño (`getDamage()` polimórfico). Por eso se dejó la herencia. Si el pack del jugador creciera mucho, la alternativa sería que `PlayerPack` *contenga* un `Pack` (composición) en vez de extenderlo.
